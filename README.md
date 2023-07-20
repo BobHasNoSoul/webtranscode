@@ -10,6 +10,9 @@ Usage:
 
 `python3 webtranscode.py`
 
+or to run without the input being on screen run `nohup python3 webtranscode.py > webtranscode.log 2>&1 & `
+this allows you to then close the terminal 
+
 on the client stream via the following url
 
 `http://YOUR_SERVER_IP_HERE:8901/transcode/YOUR_HDHOMERUN_STREAM_HERE`
