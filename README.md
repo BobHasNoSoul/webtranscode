@@ -16,7 +16,7 @@ on the client stream via the following url
 
 for example if your server ip was 192.168.1.44 and the stream url was http://192.168.1.55:5004/auto/v717 it would be the following 
 
-`http://192.168.1.76:8901/transcode/192.168.1.55:5004/auto/v717`
+`http://192.168.1.44:8901/transcode/192.168.1.55:5004/auto/v717`
 
 
 
