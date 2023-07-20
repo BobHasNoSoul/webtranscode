@@ -4,12 +4,10 @@ from flask import Flask, request, Response, jsonify
 import traceback
 
 app = Flask(__name__)
-ffmpeg_process = None
-ffmpeg_thread = None
-clients = set()
+ffmpeg_processes = {}  # Dictionary to store ffmpeg processes for each active stream
+ffmpeg_threads = {}    # Dictionary to store ffmpeg threads for each active stream
 
-def start_ffmpeg(url_string):
-    global ffmpeg_process, ffmpeg_thread
+def start_ffmpeg(url_string, client_ip):
     cmd = [
         'ffmpeg',
         '-i', f'http://{url_string}',
@@ -20,46 +18,48 @@ def start_ffmpeg(url_string):
         'pipe:1'  # Output to stdout (pipe)
     ]
     ffmpeg_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    ffmpeg_thread = threading.Thread(target=ffmpeg_monitor)
+    ffmpeg_thread = threading.Thread(target=ffmpeg_monitor, args=(client_ip, ffmpeg_process))
     ffmpeg_thread.start()
 
-def ffmpeg_monitor():
-    global ffmpeg_process, ffmpeg_thread
-    ffmpeg_process.wait()  # Wait for ffmpeg process to complete
-    ffmpeg_thread = None  # Reset the thread after ffmpeg completes
-    print("FFmpeg process stopped.")
+    # Store the process and thread in the dictionaries
+    ffmpeg_processes[client_ip] = ffmpeg_process
+    ffmpeg_threads[client_ip] = ffmpeg_thread
 
-def stop_ffmpeg():
-    global ffmpeg_process
-    if ffmpeg_process:
-        ffmpeg_process.kill()
-        ffmpeg_process = None
+def generate(client_ip):
+    process = ffmpeg_processes.get(client_ip)
+    if not process:
+        return
+
+    try:
+        while process.poll() is None:  # Check if the process is still running
+            data = process.stdout.read(4096)
+            if not data:
+                break
+            yield data
+    except:
+        traceback.print_exc()
+    finally:
+        stop_ffmpeg(client_ip)
+
+
+def ffmpeg_monitor(client_ip, process):
+    process.wait()  # Wait for ffmpeg process to complete
+    print(f"FFmpeg process for client {client_ip} stopped.")
+    # Remove the process and thread from the dictionaries
+    del ffmpeg_processes[client_ip]
+    del ffmpeg_threads[client_ip]
+
+def stop_ffmpeg(client_ip):
+    process = ffmpeg_processes.get(client_ip)
+    if process:
+        process.kill()
+        print(f"Stopping FFmpeg process for client {client_ip}")
 
 @app.route('/transcode/<path:url_string>', methods=['GET'])
 def transcode(url_string):
-    global clients
     try:
-        if not clients:
-            # Start ffmpeg only if there are no active clients
-            start_ffmpeg(url_string)
-
-        # Add the client to the set of active clients
-        clients.add(request.environ.get('REMOTE_ADDR'))
-
-        def generate():
-            try:
-                while True:
-                    data = ffmpeg_process.stdout.read(4096)
-                    if not data:
-                        break
-                    yield data
-            except:
-                traceback.print_exc()
-            finally:
-                clients.discard(request.environ.get('REMOTE_ADDR'))
-                if not clients:
-                    # Stop ffmpeg when there are no active clients
-                    stop_ffmpeg()
+        client_ip = request.environ.get('REMOTE_ADDR')
+        start_ffmpeg(url_string, client_ip)
 
         # Set the response headers to indicate audio/mp3 content
         headers = {
@@ -67,12 +67,12 @@ def transcode(url_string):
             'Content-Disposition': 'attachment; filename="transcoded_audio.mp3"'
         }
 
-        # Return the response with the generator as the audio data
-        return Response(generate(), headers=headers)
+        # Return the response with the generator as the audio data, passing the client_ip
+        return Response(generate(client_ip), headers=headers)
 
     except Exception as e:
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
-
+		
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8901)
